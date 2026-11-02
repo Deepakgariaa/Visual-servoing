@@ -1,0 +1,10 @@
+Task 1: IBVS - Static Target
+============================
+status                      : completed
+steps                       : 100
+initial error px            : 1067
+final error px              : 0.005727
+time to 10px s              : 5.9
+initial feature             : [156.47, -122.77, 1450.0]
+final feature               : [39.99, 30.0, 2500.0]
+headline                    : error 1067 px -> 0.0 px in 10 s (completed)

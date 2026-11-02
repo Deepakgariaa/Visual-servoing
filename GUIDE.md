@@ -335,4 +335,30 @@ python main.py --all --headless       # everything, writes results/
 
 ## My results (s* = [40, 30, 2500])
 
-RESULTS_PLACEHOLDER
+All 37 unit tests pass. Outputs of `python main.py --all --headless` are in `results/`.
+
+| Task | My result | README expects (with s* = [0, 0, 3000]) |
+|:---:|:---|:---|
+| 1 | error 1067 px → 0.006 px in 10 s (below 10 px after 5.9 s), final s = [39.99, 30.0, 2500] | 1563 → ~3 px |
+| 2 | steady tracking error 57 px (classic) → 9.0 px (compensated) | ~62 → ~10 px |
+| 3 | classic IBVS: **collision**; RRT path: 0 collisions, min clearance 3.0 cm, final error 62 px | collision; 0 collisions |
+| 4 | path cost RRT 5848 → RRT* 1340 (4.4× shorter); 0 collisions | ~6200 → ~1900 |
+
+Why do Tasks 3–4 end 62 / 95 px from s* instead of ~0? The planner stops as soon as a
+node is within `RRT_RADIUS_R = 75 px` of s* (the planned path ended 39 px away in Task 4),
+and the tracking controller stops at the last waypoint. The error number also mixes px and px²
+(most of the 95 is 82 px² of area). The reference solution shows the same thing (73 / 64 px).
+You could add a final Task 1 IBVS phase from the end of the path to remove this leftover error.
+
+### Things to look at in `results/`
+* `task1_static_ibvs/task1_results.png`: the error curve; on a log axis it is a straight line,
+  which is what "exponential decay" means.
+* `task2_moving_target/task2_results.png`: classic vs compensated tracking error.
+* `task3_rrt/task3_motion_sequence.png`: top row, IBVS crashing into the pillar; bottom row, the RRT path.
+* `task4_rrt_star/task4_rrt_vs_rrt_star.png`: the wandering RRT path vs the short RRT* path.
+
+## About the "bonus"
+
+The assignment repository (README, code comments, tests) has **no bonus task**. It has
+TODO 0 + TODOs 1–8, and all of them are done here. If your course handout lists a bonus
+somewhere else, send it to me and I'll do it.
