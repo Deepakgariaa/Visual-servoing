@@ -23,7 +23,8 @@ def load(folder, task):
     return np.load(folder / f"{sub}_data.npz")
 
 
-fig, axs = plt.subplots(1, 4, figsize=(12, 2.8))
+fig, axs = plt.subplots(2, 2, figsize=(8, 5.6))
+axs = axs.ravel()
 
 # Task 1: error on a log scale
 ax = axs[0]

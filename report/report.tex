@@ -17,6 +17,7 @@
 \usepackage{caption,subcaption}
 \usepackage[most]{tcolorbox}
 \usepackage{listings}
+\usepackage[section]{placeins}   % keep figures inside their section
 \usepackage[hidelinks]{hyperref}
 
 % ---------------------------------------------------------------- design
@@ -40,6 +41,7 @@
 \captionsetup{font=small,labelfont={sf,bf,color=accent},labelsep=period}
 \setlist{itemsep=2pt,topsep=4pt}
 \renewcommand{\arraystretch}{1.18}
+\setlength{\emergencystretch}{3em}
 
 \lstset{basicstyle=\ttfamily\footnotesize,backgroundcolor=\color{codebg},frame=single,
         rulecolor=\color{codebg},xleftmargin=4pt,xrightmargin=4pt,aboveskip=6pt,belowskip=6pt,
@@ -68,9 +70,29 @@
 
 \vspace{4pt}
 \noindent\textbf{\sffamily\color{accent}Abstract.}\;
-%%ABSTRACT%%
+A camera on the tool of a simulated UR5 must make a target appear at a chosen position and size in
+its image. I implemented image-based visual servoing with a $3\times6$ interaction matrix for the
+target's centroid and area, extended it to a target moving on a circle by estimating and cancelling
+the target's motion, and avoided an obstacle by planning in image space with RRT and RRT$^{*}$ whose
+nodes also carry the robot configuration. On top of this baseline I added four improvements: an
+adaptive gain, a two-step-ahead prediction of the target's motion, shortcutting of the planned path,
+and a final IBVS stage after the plan. Together they halve the time Task~1 needs to reach 10\,px
+(5.9\,s to 3.0\,s), cut the moving-target tracking error from 9.0\,px to 0.43\,px, and bring the final
+error of the planning tasks from 62--95\,px down to 1\,px, with no collision in any run.
 
-%%KEYRESULTS%%
+
+\begin{keybox}{Results at a glance ($\vect s^{*}=[40,\,30,\,2500]$)}
+\small
+\begin{tabularx}{\linewidth}{@{}lXrr@{}}
+  & & \textbf{Baseline} & \textbf{Improved}\\
+  Task 1 & time to reach 10\,px & 5.9\,s & 3.0\,s\\
+  Task 2 & steady tracking error (compensated) & 9.0\,px & 0.43\,px\\
+  Task 3 & final error to $\vect s^{*}$ (classic IBVS collides in both) & 61.9\,px & 1.0\,px\\
+  Task 4 & final error to $\vect s^{*}$; RRT$^{*}$ path 4.4$\times$ shorter than RRT & 94.6\,px & 1.0\,px\\
+  All & collisions & 0 & 0
+\end{tabularx}
+\end{keybox}
+
 
 % ---------------------------------------------------------------- 1
 \section{Introduction}
@@ -246,7 +268,268 @@ neighbours $\mathcal N$ within 150\,px:
 RRT$^{*}$ does not stop at the first solution: it runs all 3000 iterations and returns the cheapest node
 within the goal radius.
 
-%%RESULTS%%
+% ---------------------------------------------------------------- 4
+\section{Baseline results}\label{sec:baseline}
+
+Table~\ref{tab:baseline} lists the results with only the TODOs implemented. All 37 unit tests pass.
+
+\begin{table}[htbp]
+\centering\small
+\caption{Baseline results (TODOs 0--8 only).}\label{tab:baseline}
+\begin{tabular}{@{}clr@{}}
+\toprule
+Task & Measure & Value\\
+\midrule
+1 & feature error, start $\rightarrow$ end of 10\,s & 1067\,px $\rightarrow$ 0.006\,px\\
+1 & time to reach 10\,px & 5.9\,s\\
+2 & steady tracking error, classic / compensated & 57.2\,px / 9.0\,px\\
+2 & largest steady error, classic / compensated & 74.5\,px / 11.3\,px\\
+3 & classic IBVS (no planning) & collision after 3 steps\\
+3 & RRT: iterations / nodes / path cost & 280 / 74 / 3283\\
+3 & final error / mean tracking error & 61.9\,px / 20.6\,px\\
+3 & collisions / smallest clearance & 0 / 2.98\,cm\\
+4 & path cost RRT / RRT$^{*}$ & 5848 / 1340\\
+4 & planning time RRT / RRT$^{*}$ & 5.0\,s / 8.7\,s\\
+4 & final error / mean tracking error & 94.6\,px / 27.0\,px\\
+4 & collisions / smallest clearance & 0 / 2.25\,cm\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Task 1} The error falls on a straight line in a log plot (Fig.~\ref{fig:base12}a), which is
+the signature of exponential decay, from 1067\,px down to a few pixels. Below that it jumps between 0
+and 2\,px, because the centroid is computed from whole pixels and the camera cannot see smaller
+errors. The target crosses the image in an almost straight line, a known property of IBVS.
+
+\paragraph{Task 2} The classic law settles into a constant lag, its error swinging between 35 and
+75\,px as the target circles. Compensation removes most of it (9.0\,px), and the estimated target rate
+is a clean pair of sine waves with the 8\,s period of the circle (Fig.~\ref{fig:base12}b).
+
+\begin{figure}[htbp]
+\centering
+\begin{subfigure}{0.49\linewidth}\includegraphics[width=\linewidth]{figures/task1_baseline.png}\caption{Task 1}\end{subfigure}\hfill
+\begin{subfigure}{0.49\linewidth}\includegraphics[width=\linewidth]{figures/task2_baseline.png}\caption{Task 2}\end{subfigure}
+\caption{Baseline IBVS. (a) Target path in the image, error on a log scale, camera twist and joint
+rates. (b) Tracking error of classic (red) and compensated (blue) IBVS, the target's path in the
+image, the estimated target rate and the camera twist.}\label{fig:base12}
+\end{figure}
+
+\paragraph{Tasks 3 and 4} Classic IBVS hits the pillar after 3 steps (Fig.~\ref{fig:task3}, top row).
+The RRT path goes around it with zero collisions, but it ends 62\,px from $\vect s^{*}$, and in
+Task~4 the RRT$^{*}$ path ends 95\,px away. This is the main weakness of the baseline: the planner stops
+as soon as a node is within 75\,px of the goal, and the tracking controller stops at the last waypoint,
+so nothing ever drives the camera the rest of the way.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\linewidth]{figures/task3_motion_sequence.png}
+\caption{Task 3. Top: classic IBVS drives into the red pillar. Bottom: the robot following the planned
+path around it; the insets show the camera view and the planned path in the image.}\label{fig:task3}
+\end{figure}
+
+% ---------------------------------------------------------------- 5
+\section{Improvements}\label{sec:improvements}
+
+Each improvement targets one weakness seen above, and each has an on/off switch in
+\texttt{config/experiment\_config.py}. With all four switches off, the code reproduces the baseline
+numbers exactly.
+\begin{center}\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+Improvement & Switch & Tasks\\
+\midrule
+Adaptive gain & \texttt{USE\_ADAPTIVE\_GAIN} & 1, 2\\
+Target-motion prediction & \texttt{USE\_MOTION\_PREDICTION} & 2\\
+Path shortcutting & \texttt{USE\_PATH\_SHORTCUT} & 3, 4\\
+Final IBVS stage & \texttt{USE\_FINAL\_IBVS} & 3, 4\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Adaptive gain (Tasks 1--2)}
+
+A fixed $\lambda$ is a compromise. A large gain gives large velocities when the error is large, and a
+small gain makes the last part of the motion slow, because the error shrinks by the same fraction each
+second however small it already is. I used the adaptive gain of ViSP \cite{visp2005}, which is low
+far from the goal and rises as the error gets small:
+\begin{equation}
+  \lambda(\lVert\vect e\rVert)=(\lambda_0-\lambda_\infty)\exp\!\left(-\frac{\lambda'_0\,\lVert\vect e\rVert}{\lambda_0-\lambda_\infty}\right)+\lambda_\infty,
+  \qquad \lambda_0=4,\ \lambda_\infty=1\ \text{s}^{-1},\ \lambda'_0=0.015\ \text{s}^{-1}\text{px}^{-1}.
+\end{equation}
+At the start ($\lVert\vect e\rVert\approx1000$\,px) the gain is 1.0, exactly the baseline, so the largest
+joint speed is unchanged (0.96 against 0.95\,rad/s). At 100\,px it is 2.8 and near zero error it is 4.
+I tuned $\lambda'_0$ by trying 0.015--0.04: smaller slopes raise the gain earlier and reached 10\,px
+fastest. With $\lambda\Delta t\le0.4$ the discrete loop stays far from its stability limit of 2.
+
+\subsection{Target-motion prediction (Task 2)}
+
+The remaining 9\,px in Task~2 is a lag. The estimate of Eq.~\eqref{eq:motion} is built from the
+\emph{previous} interval and then smoothed, while the command acts over the \emph{next} interval, so the
+camera always uses a target velocity about one and a half steps old. On a circle that velocity keeps
+turning, so an old value points the wrong way. A rough check confirms the size: the target's image
+speed is about 70\,px/s and turns at $2\pi/8=0.79$\,rad/s, so 1.5 steps of delay is a direction error of
+0.12\,rad, a velocity error of about 8\,px/s, and with $\lambda=1$ a steady error of about 8\,px.
+
+I therefore also estimate how fast the target-motion estimate itself is changing, its trend
+$\vect r$, and use the value predicted $H$ steps ahead, as in an $\alpha$--$\beta$ tracking filter
+\cite{barshalom2001}:
+\begin{equation}
+  \vect r_k=(1-\beta)\,\vect r_{k-1}+\beta\,\frac{\hat{\vect d}_k-\hat{\vect d}_{k-1}}{\Delta t},\qquad
+  \hat{\vect d}^{\,\text{pred}}_k=\hat{\vect d}_k+H\Delta t\,\vect r_k,\qquad \beta=0.5,\ H=2,
+\end{equation}
+where $\hat{\vect d}_k$ is the filtered estimate of $\partial\vect e/\partial t$. The prediction
+replaces $\hat{\vect d}_k$ in Eq.~\eqref{eq:comp}. I chose $\beta$ and $H$ by trying $\beta\in\{0.2,0.3,0.5\}$
+and $H\in\{1,2,3\}$: on its own, with a fixed gain, the best setting lowered the steady error from 9.0
+to 1.4\,px; $H=3$ over-predicts and is worse again.
+
+\subsection{Path shortcutting (Tasks 3--4)}
+
+A random tree reaches the goal through detours. After planning, I shorten the path greedily
+\cite{geraerts2007}: from the current node, try to jump straight to the \emph{last} node of the path,
+then to the one before it, and so on, and keep the first jump that is valid. A jump is valid if it
+needs at most 1.0\,rad of motion in every joint and every configuration along the straight joint-space
+edge, checked every 0.05\,rad, keeps the target in view, is not hidden by the obstacle and keeps the
+2\,cm margin. The same checks as the planner's own edges are used, so the shortened path is as safe as
+the original. Path costs in Section~\ref{sec:improved} are reported both for the tree and for the
+shortened path, so the RRT against RRT$^{*}$ comparison stays fair.
+
+\subsection{Final IBVS stage (Tasks 3--4)}
+
+When the last waypoint is reached the camera is past the obstacle and within the planner's goal radius
+of $\vect s^{*}$. From there the remaining motion is a short, unobstructed servoing problem, so the
+controller switches to plain IBVS towards $\vect s^{*}$, still holding the camera orientation fixed
+through the same secondary task:
+\begin{equation}
+  \dot{\vect q}=J_1\pinv(-\lambda_f\vect e)+P_1(J_2P_1)\pinv\!\left(\vect 0-J_2J_1\pinv(-\lambda_f\vect e)\right),\qquad \lambda_f=1.5\ \text{s}^{-1}.
+\end{equation}
+It runs until $\lVert\vect e\rVert<1.5$\,px, for at most 80 steps, and stops early if the next pose would
+enter the 2\,cm safety margin around the obstacle.
+
+% ---------------------------------------------------------------- 6
+\section{Results with the improvements}\label{sec:improved}
+
+Every task improved where it was weakest, and no run collided (Table~\ref{tab:improved},
+Fig.~\ref{fig:cmp}). The two planning tasks now end within 1\,px of $\vect s^{*}$ instead of 62 and
+95\,px, at the cost of 2--6\,s of extra motion for the final stage.
+
+\begin{table}[htbp]
+\centering\small
+\caption{Baseline against improved. Unit tests: 37 of 37 pass in both configurations.}\label{tab:improved}
+\begin{tabular}{@{}clrr@{}}
+\toprule
+Task & Measure & Baseline & Improved\\
+\midrule
+1 & time to reach 10\,px & 5.9\,s & \textbf{3.0\,s}\\
+1 & final error & 0.006\,px & 0.006\,px\\
+1 & largest joint speed & 0.95\,rad/s & 0.96\,rad/s\\
+\midrule
+2 & steady error, classic IBVS & 57.2\,px & 39.1\,px\\
+2 & steady error, compensated & 9.0\,px & \textbf{0.43\,px}\\
+2 & largest steady error, compensated & 11.3\,px & \textbf{0.59\,px}\\
+\midrule
+3 & classic IBVS (no planning) & collision, 3 steps & collision, 2 steps\\
+3 & path cost (tree / executed) & 3283 / 3283 & 3283 / \textbf{2624}\\
+3 & nodes on the path & 11 & 4\\
+3 & error when the plan ends & 61.9\,px & 81.8\,px\\
+3 & final error & 61.9\,px & \textbf{1.0\,px}\\
+3 & motion time (plan + final stage) & 22.5\,s & 17.7 + 6.7 = 24.4\,s\\
+3 & collisions / smallest clearance & 0 / 2.98\,cm & 0 / 2.20\,cm\\
+\midrule
+4 & RRT path cost (tree / executed) & 5848 / 5848 & 5848 / \textbf{2161}\\
+4 & RRT$^{*}$ path cost (tree / executed) & 1340 / 1340 & 1340 / \textbf{1306}\\
+4 & error when the plan ends & 94.6\,px & 50.8\,px\\
+4 & final error & 94.6\,px & \textbf{1.0\,px}\\
+4 & motion time (plan + final stage) & 9.4\,s & 9.0 + 6.1 = 15.1\,s\\
+4 & collisions / smallest clearance & 0 / 2.25\,cm & 0 / 2.33\,cm\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.9\linewidth]{figures/comparison.pdf}
+\caption{Baseline (grey) against improved (blue). Task 1: the adaptive gain reaches 10\,px (dotted)
+in half the time. Task 2: prediction and the adaptive gain remove the oscillating lag. Tasks 3--4:
+the shortened path ends sooner and the final IBVS stage then takes the error to 1\,px.}\label{fig:cmp}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.92\linewidth]{figures/paths.pdf}
+\caption{Executed paths of the target in the image. Shortcutting removes the zig-zags of the random tree;
+the final stage adds the short last segment into $\vect s^{*}$.}\label{fig:paths}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\begin{subfigure}{0.49\linewidth}\includegraphics[width=\linewidth]{figures/task3_improved.png}\caption{Task 3}\end{subfigure}\hfill
+\begin{subfigure}{0.49\linewidth}\includegraphics[width=\linewidth]{figures/task4_improved.png}\caption{Task 4}\end{subfigure}
+\caption{Executions with the improvements: path in the image, clearance to the obstacle (dashed line:
+2\,cm margin), occlusion check, and tracking and goal error.}\label{fig:imp34}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\linewidth]{figures/task4_rrt_vs_rrt_star.png}
+\caption{Task 4 trees: RRT (left) and RRT$^{*}$ (middle) with the chosen path in red, and the tree path
+costs (right).}\label{fig:rrtstar}
+\end{figure}
+
+% ---------------------------------------------------------------- 7
+\section{Discussion}
+
+\paragraph{The final stage matters most for Tasks 3--4} It took the final error from 62 and 95\,px to
+1\,px in 67 and 61 extra steps. The clearance during the final stage stayed above 3.3\,cm in both
+tasks, so the safety stop was never needed. This confirms the idea behind it: the planner only has to
+get the camera safely past the obstacle; the last few centimetres are an ordinary IBVS problem.
+
+\paragraph{Shortcutting helps RRT far more than RRT$^{*}$} It cut the RRT path in Task~4 by 63\,\%
+(5848 to 2161) but the RRT$^{*}$ path by only 2.5\,\% (1340 to 1306), because RRT$^{*}$ has already
+removed most detours during planning by rewiring. RRT$^{*}$ is still the shorter of the two after
+shortcutting, by a factor of 1.65. Shortcutting can only delete nodes from a path that exists;
+RRT$^{*}$ can find a different, better route.
+
+\paragraph{Motion time} The improved runs take longer in Task~4 (9.4 to 15.1\,s) and slightly longer in
+Task~3 (22.5 to 24.4\,s). The planned motion itself got shorter (17.7 and 9.0\,s), but the final stage
+adds about 6--7\,s, because its error decays exponentially from 50--80\,px down to 1.5\,px with
+$\lambda_f=1.5$. A higher $\lambda_f$, or the adaptive gain applied to the final stage, would shorten
+this; the trade-off is speed against how gently the arm approaches its final pose.
+
+\paragraph{Precision near the goal} In Task~1 the adaptive gain reaches 10\,px in 3.0\,s, but afterwards
+the error hops between 0 and 1\,px (Fig.~\ref{fig:cmp}) instead of settling smoothly. With a gain of 4
+near the goal, each one-pixel jump in the measured centroid produces a visible correction. The final
+error is the same 0.006\,px as the baseline.
+
+\paragraph{Task 2 prediction is tuned to smooth motion} The trend term assumes the target's image
+velocity changes smoothly, which is exactly true for a circle. For a target that stops or turns
+sharply the prediction would overshoot for a few steps. The adaptive gain also helped classic IBVS
+(57 to 39\,px) because it raises the gain once the error is small, but the lag of classic IBVS is
+structural and only compensation removes it.
+
+\paragraph{Limitations} The area row of $L$ assumes a target parallel to the image plane, while in
+Tasks~3--4 the camera looks down at 20$^{\circ}$; the feedback corrects the resulting model error. The
+depth $Z$ is taken from the simulator; a real system would have to estimate it, for example from the
+measured area. Shortcut edges are checked as straight lines in joint space, while the controller tracks
+straight lines in feature space between waypoints, so the executed motion can differ slightly from the
+checked edge; the smallest clearance, 2.2\,cm, stayed above the 2\,cm margin in every run.
+
+% ---------------------------------------------------------------- 8
+\section{Conclusion}
+
+All nine required parts work: classic IBVS converges exponentially, the compensated law tracks a moving
+target six times better than classic IBVS, and image-space RRT and RRT$^{*}$ avoid the obstacle that
+makes IBVS alone fail, RRT$^{*}$ with a 4.4 times shorter path. The four improvements address the weak
+points this left. The adaptive gain halves the time to converge, predicting the target's motion cuts
+the tracking error by a factor of 20 to 0.43\,px, and path shortcutting with a final IBVS stage brings
+the camera to within 1\,px of $\vect s^{*}$ in the planning tasks, without any collision.
+
+\paragraph{Reproducing the results} The code is in the repository
+\url{https://github.com/deepakgariaa/visual-servoing}, branch
+\texttt{claude/festive-brown-ws92ga}.
+Running \texttt{python main.py --all --headless} reproduces the improved results; setting the four
+\texttt{USE\_*} switches to \texttt{False} reproduces the baseline. Running
+\texttt{python report/make\_figures.py} redraws the comparison figures.
+
 
 % ---------------------------------------------------------------- references
 \begin{thebibliography}{9}\small

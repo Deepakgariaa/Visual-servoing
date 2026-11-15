@@ -4,17 +4,20 @@ rrt path cost               : 5848
 rrt star path cost          : 1340
 rrt nodes                   : 665
 rrt star nodes              : 836
-rrt planning time s         : 5.649
-rrt star planning time s    : 9.842
-rrt waypoints               : 406
-rrt star waypoints          : 94
+rrt planning time s         : 5.562
+rrt star planning time s    : 8.757
+rrt waypoints               : 147
+rrt star waypoints          : 90
+rrt executed path cost      : 2161
+rrt star executed path cost : 1306
 execution status            : trajectory_complete
-control steps               : 94
-motion time s               : 9.4
+final ibvs steps            : 61
+control steps               : 151
+motion time s               : 15.1
 initial error px            : 1003
-final error px              : 94.56
-mean tracking error px      : 27.03
-min clearance cm            : 2.252
+final error px              : 1
+mean tracking error px      : 22.63
+min clearance cm            : 2.332
 collisions                  : 0
 min image clearance px      : None
-headline                    : path cost RRT 5848 -> RRT* 1340; 0 collisions, final error 95 px, motion 9 s
+headline                    : path cost RRT 5848 -> RRT* 1340; 0 collisions, final error 1 px, motion 15 s
