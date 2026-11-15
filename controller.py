@@ -11,6 +11,7 @@ import numpy as np
 from config import (
     CAMERA_OFFSET_POS,
     CONTROL_DT, TRACKING_GAIN,
+    FINAL_IBVS_GAIN, FINAL_IBVS_MAX_STEPS, FINAL_IBVS_TOLERANCE, USE_FINAL_IBVS,
     JOINT_LIMITS_LOWER, JOINT_LIMITS_UPPER, JOINT_VELOCITY_LIMITS,
     MAX_CONTROL_STEPS,
 )
@@ -152,6 +153,52 @@ class IBVSTrajectoryController:
             if n_steps < len(traj):
                 done, reason = False, "max_control_steps"
 
+        # Improvement 4: the plan only brings the camera near s* (within the
+        # planner's goal radius).  The obstacle is now behind us, so finish
+        # with plain IBVS towards s* itself, camera orientation still fixed.
+        final_steps = 0
+        if done and USE_FINAL_IBVS:
+            for _ in range(FINAL_IBVS_MAX_STEPS):
+                err = cur_feat - goal
+                if np.linalg.norm(err) < FINAL_IBVS_TOLERANCE:
+                    break
+                Jc = self._cam_jac(q_cur)
+                J1 = self.Lm.image_jacobian(self.Lm.compute(cur_feat, cur_z), Jc)
+                J2 = None if not self.secondary else secondary_task_jacobian(self.secondary, Jc)
+                qd = self._limit_vel(self.tp.solve(J1, -FINAL_IBVS_GAIN * err, J2))
+                q_next = np.clip(q_cur + qd * self.dt, JOINT_LIMITS_LOWER, JOINT_LIMITS_UPPER)
+                # stop before entering the 2 cm safety margin around obstacles
+                if self.has_obstacles and self.env.check_collision(q_next):
+                    reason = "final_ibvs_stopped_at_safety_margin"
+                    break
+                q_cur = q_next
+                self.env.reset_joint_state(q_cur)
+                feat_info = self.env.get_current_feature(return_mask=True)
+                if feat_info[0] is None:
+                    done, reason = False, "target_lost"
+                    break
+                cur_feat = np.asarray(feat_info[0], dtype=np.float64)
+                cur_z = float(feat_info[1])
+                final_steps += 1
+                ex_feat.append(cur_feat.copy())
+                ex_jnt.append(q_cur.copy())
+                ex_vel.append(qd.copy())
+                trk_err.append(float(np.linalg.norm(cur_feat - goal)))
+                cam_vel.append(Jc @ qd)
+                goal_err.append(float(np.linalg.norm(cur_feat - goal)))
+                depths.append(cur_z)
+                if self.has_obstacles:
+                    clearance.append(self.env.min_obstacle_distance())
+                if callable(step_callback):
+                    step_callback({"step": len(traj) + final_steps, "waypoint_idx": len(traj) - 1,
+                                   "total_waypoints": len(traj), "target_waypoint": goal,
+                                   "current_feature": cur_feat, "depth": cur_z,
+                                   "tracking_error": trk_err[-1], "goal_error": goal_err[-1],
+                                   "joint_positions": q_cur, "joint_velocities": qd,
+                                   "rgb": feat_info[2], "mask": feat_info[3],
+                                   "status": "Final IBVS to s*",
+                                   "clearance": clearance[-1] if clearance else None})
+
         fe = float(np.linalg.norm(cur_feat - goal))
         fv = float(np.linalg.norm(ex_vel[-1])) if ex_vel else 0.0
         print(f"[IBVS] {reason}; goal error={fe:.2f}, joint-speed={fv:.6f} rad/s")
@@ -170,4 +217,5 @@ class IBVSTrajectoryController:
             "final_joint_vel_norm": fv,
             "completed": done,
             "termination_reason": reason,
+            "final_ibvs_steps": final_steps,
         }

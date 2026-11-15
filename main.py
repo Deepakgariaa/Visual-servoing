@@ -207,6 +207,7 @@ def _execute(env, kin, planned_s, goal, vis):
 def _execution_metrics(result, img_clear):
     return {
         "execution_status": result["termination_reason"],
+        "final_ibvs_steps": int(result.get("final_ibvs_steps", 0)),
         "control_steps": int(len(result["tracking_errors"])),
         "motion_time_s": float(len(result["tracking_errors"]) * CONTROL_DT),
         "initial_error_px": result["initial_error"],
@@ -265,6 +266,8 @@ def run_task3(out_dir, gui, hold, quick):
                    "classic_ibvs_steps": int(len(direct["t"])),
                    "rrt_nodes": int(info["explored_nodes"]), "rrt_iterations": int(info["iterations"]),
                    "path_cost": float(info["path_cost"]), "planning_time_s": float(plan_time),
+                   "executed_path_cost": float(info["executed_path_cost"]),
+                   "path_nodes": int(info["path_nodes"]),
                    "waypoints": int(len(planned_s))}
         metrics.update(_execution_metrics(result, img_clear))
         metrics["headline"] = (f"classic IBVS: {direct['status']}; RRT: {metrics['collisions']} collisions, "
@@ -330,7 +333,9 @@ def run_task4(out_dir, gui, hold, quick):
                    "rrt_star_path_cost": float(star.last_plan_result["path_cost"]),
                    "rrt_nodes": int(len(rrt_f)), "rrt_star_nodes": int(len(tree_f)),
                    "rrt_planning_time_s": float(rrt_time), "rrt_star_planning_time_s": float(star_time),
-                   "rrt_waypoints": int(len(rrt_s)), "rrt_star_waypoints": int(len(planned_s))}
+                   "rrt_waypoints": int(len(rrt_s)), "rrt_star_waypoints": int(len(planned_s)),
+                   "rrt_executed_path_cost": float(rrt.last_plan_result["executed_path_cost"]),
+                   "rrt_star_executed_path_cost": float(star.last_plan_result["executed_path_cost"])}
         metrics.update(_execution_metrics(result, img_clear))
         metrics["headline"] = (f"path cost RRT {metrics['rrt_path_cost']:.0f} -> RRT* {metrics['rrt_star_path_cost']:.0f}; "
                                f"{metrics['collisions']} collisions, final error {result['final_error']:.0f} px, "

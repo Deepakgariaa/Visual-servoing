@@ -13,8 +13,9 @@ Student TODOs:
 
 import numpy as np
 
-from config import (CAMERA_OFFSET_POS, CONTROL_DT, IBVS_GAIN, JOINT_LIMITS_LOWER,
-                    JOINT_LIMITS_UPPER, JOINT_VELOCITY_LIMITS, MOTION_FILTER)
+from config import (ADAPTIVE_GAIN, CAMERA_OFFSET_POS, CONTROL_DT, IBVS_GAIN, JOINT_LIMITS_LOWER,
+                    JOINT_LIMITS_UPPER, JOINT_VELOCITY_LIMITS, MOTION_FILTER, PREDICTION_BETA,
+                    PREDICTION_STEPS, USE_ADAPTIVE_GAIN, USE_MOTION_PREDICTION)
 from kinematics import InteractionMatrix, damped_pinv
 
 
@@ -72,6 +73,14 @@ def compensated_camera_velocity(L, e, lam, de_hat):
     return v
 
 
+# --------------------- Improvements --------------------------------------
+
+def adaptive_gain(err_norm, l0, linf, slope0):
+    """Adaptive gain (the form used in ViSP): l0 when the error is zero,
+    linf when it is large, and slope0 = d(lambda)/d|e| at zero error."""
+    return (l0 - linf) * np.exp(-slope0 * err_norm / (l0 - linf)) + linf
+
+
 # --------------------- Servo loop (provided) -----------------------------
 
 class IBVSServo:
@@ -110,6 +119,7 @@ class IBVSServo:
         status, collision_q = "completed", None
         s_prev = L_prev = v_prev = None
         de_hat = np.zeros(3)
+        trend = np.zeros(3)        # how fast de_hat is changing (improvement 2)
 
         for k in range(int(steps)):
             t = k * self.dt
@@ -123,13 +133,27 @@ class IBVSServo:
             L = self.Lm.compute(s, z)
             e = s - self.goal
 
+            # Improvement 1: the gain rises as the error gets small
+            lam = self.lam
+            if USE_ADAPTIVE_GAIN:
+                lam = adaptive_gain(np.linalg.norm(e), **ADAPTIVE_GAIN)
+
             if self.compensate:
                 if s_prev is not None:
                     new = estimate_target_motion(s, s_prev, L_prev, v_prev, self.dt)
+                    old = de_hat
                     de_hat = (1 - MOTION_FILTER) * de_hat + MOTION_FILTER * np.asarray(new)
-                v = compensated_camera_velocity(L, e, self.lam, de_hat)
+                    if USE_MOTION_PREDICTION:
+                        change = (de_hat - old) / self.dt
+                        trend = (1 - PREDICTION_BETA) * trend + PREDICTION_BETA * change
+                # Improvement 2: use the target motion predicted a few steps ahead,
+                # because de_hat is built from old, smoothed measurements
+                de_used = de_hat
+                if USE_MOTION_PREDICTION:
+                    de_used = de_hat + trend * PREDICTION_STEPS * self.dt
+                v = compensated_camera_velocity(L, e, lam, de_used)
             else:
-                v = ibvs_camera_velocity(L, e, self.lam)
+                v = ibvs_camera_velocity(L, e, lam)
             v = np.asarray(v, dtype=np.float64)
 
             # Camera twist -> joint velocities, within the joint velocity limits

@@ -33,6 +33,7 @@ from config import (
     RRT_DT, RRT_GOAL_BIAS_K, RRT_LAMBDA, RRT_MAX_WAYPOINT_DISTANCE,
     RRT_MAX_ITER, RRT_RADIUS_R, RRT_RANDOM_SEED,
     RRT_STAR_ITER, RRT_STAR_MAX_JOINT_STEP, RRT_STAR_NEAR_RADIUS,
+    SHORTCUT_MAX_JOINT_STEP, USE_PATH_SHORTCUT,
 )
 from kinematics import InteractionMatrix, TaskPrioritySolver, secondary_task_jacobian
 
@@ -417,7 +418,30 @@ class ImageBasedRRTPlanner:
             path_f.append(tree_f[cid].s)
             path_j.append(tree_c[cid].q)
             cid = tree_f[cid].parent_id
-        return self._densify(path_f[::-1], path_j[::-1], RRT_MAX_WAYPOINT_DISTANCE)
+        path_f, path_j = path_f[::-1], path_j[::-1]
+        if USE_PATH_SHORTCUT:                           # improvement 3
+            path_f, path_j = self._shortcut(path_f, path_j)
+        self.last_path_nodes = len(path_f)
+        self.last_path_cost = float(sum(np.linalg.norm(b - a) for a, b in zip(path_f[:-1], path_f[1:])))
+        return self._densify(path_f, path_j, RRT_MAX_WAYPOINT_DISTANCE)
+
+    def _shortcut(self, feats, joints):
+        """Improvement 3: greedy path shortcutting.  From the current node,
+        jump to the LAST node of the path that a straight joint-space edge can
+        reach (short enough, target visible, no collision), then repeat."""
+        keep_f, keep_q = [feats[0]], [joints[0]]
+        i = 0
+        while i < len(feats) - 1:
+            j = len(feats) - 1                          # try the farthest node first
+            while j > i + 1:
+                step = np.max(np.abs(joints[j] - joints[i]))
+                if step <= SHORTCUT_MAX_JOINT_STEP and self._edge_free(joints[i], joints[j]):
+                    break
+                j -= 1                                  # not reachable: try one closer
+            keep_f.append(feats[j])
+            keep_q.append(joints[j])
+            i = j
+        return keep_f, keep_q
 
     @staticmethod
     def path_cost(tree_f, goal_id):
@@ -504,7 +528,9 @@ class ImageBasedRRTPlanner:
         path_f, path_j = self._path(tree_f, tree_c, goal_id)
         self.last_plan_result = {"success": success, "iterations": int(count),
                                  "explored_nodes": len(tree_f), "goal_id": goal_id,
-                                 "path_cost": self.path_cost(tree_f, goal_id)}
+                                 "path_cost": self.path_cost(tree_f, goal_id),
+                                 "executed_path_cost": self.last_path_cost,
+                                 "path_nodes": self.last_path_nodes}
         print(f"[RRT] {len(path_f)} waypoints from {len(tree_f)} explored nodes, "
               f"path cost {self.last_plan_result['path_cost']:.0f} (success={success})")
         return np.asarray(path_f), np.asarray(path_j), tree_f, tree_c

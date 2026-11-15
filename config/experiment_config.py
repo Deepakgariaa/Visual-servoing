@@ -133,6 +133,33 @@ RRT_MAX_WAYPOINT_DISTANCE = 15.0  # planned path resampled to <= this many px pe
 TRACKING_GAIN = 8.0         # feedback gain of the trajectory-tracking IBVS (1/s)
 MAX_CONTROL_STEPS = 2000
 
+# ---------------------------------------------------------------------------
+# Improvements on top of the TODOs.  Set any switch to False to get the
+# baseline (TODOs only) behaviour back.
+# ---------------------------------------------------------------------------
+# 1. Adaptive gain (Tasks 1-2): lambda grows as the error shrinks.
+#    lambda(|e|) = (l0 - linf) * exp(-slope0 * |e| / (l0 - linf)) + linf
+USE_ADAPTIVE_GAIN = False
+ADAPTIVE_GAIN = {"l0": 4.0,        # gain at zero error (1/s)
+                 "linf": 1.0,      # gain far from the goal (1/s), = IBVS_GAIN
+                 "slope0": 0.015}  # d(lambda)/d|e| at zero error (1/(s px))
+
+# 2. Target-motion prediction (Task 2): also estimate how fast the target's
+#    feature rate is changing, and use the rate predicted one step ahead.
+USE_MOTION_PREDICTION = False
+PREDICTION_BETA = 0.5      # weight of a new measurement of the rate's change
+PREDICTION_STEPS = 2.0     # how many control steps ahead to predict
+
+# 3. Path shortcutting (Tasks 3-4): skip tree nodes that can be joined directly.
+USE_PATH_SHORTCUT = False
+SHORTCUT_MAX_JOINT_STEP = 1.0    # longest straight joint-space shortcut (rad)
+
+# 4. Final IBVS stage (Tasks 3-4): after the last waypoint, servo to s* itself.
+USE_FINAL_IBVS = False
+FINAL_IBVS_GAIN = 1.5            # lambda of the final stage (1/s)
+FINAL_IBVS_MAX_STEPS = 80
+FINAL_IBVS_TOLERANCE = 1.5       # stop when |s - s*| is below this (px)
+
 # Dataset
 DATASET_SIZE_FULL = 2000
 DATASET_RANDOM_SEED = 7

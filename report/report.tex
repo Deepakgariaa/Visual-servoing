@@ -1,0 +1,271 @@
+\documentclass[11pt,a4paper]{article}
+
+% ---------------------------------------------------------------- packages
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{mathpazo}                 % Palatino text and maths
+\usepackage[scaled=0.92]{helvet}      % sans-serif for headings
+\usepackage{amsmath,amssymb,bm}
+\usepackage[a4paper,margin=2.3cm,headheight=14pt]{geometry}
+\usepackage{microtype}
+\usepackage{graphicx}
+\usepackage{booktabs,tabularx}
+\usepackage[table]{xcolor}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+\usepackage{enumitem}
+\usepackage{caption,subcaption}
+\usepackage[most]{tcolorbox}
+\usepackage{listings}
+\usepackage[hidelinks]{hyperref}
+
+% ---------------------------------------------------------------- design
+\definecolor{ink}{HTML}{1F2A33}
+\definecolor{accent}{HTML}{0B6E8A}
+\definecolor{soft}{HTML}{E8F3F6}
+\definecolor{codebg}{HTML}{F6F7F8}
+
+\titleformat{\section}{\sffamily\Large\bfseries\color{accent}}{\thesection}{0.8em}{}[\vspace{-0.4ex}{\color{accent}\titlerule[0.6pt]}]
+\titleformat{\subsection}{\sffamily\large\bfseries\color{ink}}{\thesubsection}{0.7em}{}
+\titleformat{\paragraph}[runin]{\sffamily\bfseries\color{ink}}{}{}{}[.]
+\titlespacing*{\section}{0pt}{3.2ex}{1.6ex}
+
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0pt}
+\fancyhead[L]{\sffamily\footnotesize\color{accent} Visual Servoing \& Image-Space Planning}
+\fancyhead[R]{\sffamily\footnotesize\color{accent} D26027}
+\fancyfoot[C]{\sffamily\footnotesize\thepage}
+
+\captionsetup{font=small,labelfont={sf,bf,color=accent},labelsep=period}
+\setlist{itemsep=2pt,topsep=4pt}
+\renewcommand{\arraystretch}{1.18}
+
+\lstset{basicstyle=\ttfamily\footnotesize,backgroundcolor=\color{codebg},frame=single,
+        rulecolor=\color{codebg},xleftmargin=4pt,xrightmargin=4pt,aboveskip=6pt,belowskip=6pt,
+        keywordstyle=\color{accent}\bfseries,commentstyle=\color{gray},language=Python,
+        columns=fullflexible,keepspaces=true}
+
+\newtcolorbox{keybox}[1]{enhanced,colback=soft,colframe=accent,boxrule=0pt,leftrule=3pt,
+  arc=0pt,outer arc=0pt,left=8pt,right=8pt,top=5pt,bottom=5pt,
+  title={\sffamily\bfseries #1},coltitle=accent,attach title to upper,after title={\par\smallskip}}
+
+\newcommand{\vect}[1]{\bm{#1}}
+\newcommand{\pinv}{^{+}}
+
+% ================================================================ document
+\begin{document}
+
+% ---------------------------------------------------------------- title block
+\thispagestyle{empty}
+\begin{tcolorbox}[enhanced,colback=accent,colframe=accent,arc=0pt,outer arc=0pt,
+                  left=14pt,right=14pt,top=14pt,bottom=12pt,width=\textwidth]
+  {\color{white}\sffamily
+   {\small ASSIGNMENT 3 \;\textbar\; AR523 ROBOT MANIPULATORS}\\[6pt]
+   {\LARGE\bfseries Image-Based Visual Servoing and\\[2pt] Image-Space RRT/RRT$^{*}$ for a UR5}\\[10pt]
+   {\normalsize Deepak Singh Gariya \;\textbullet\; Roll No.\ D26027 \;\textbullet\; November 2026}}
+\end{tcolorbox}
+
+\vspace{4pt}
+\noindent\textbf{\sffamily\color{accent}Abstract.}\;
+%%ABSTRACT%%
+
+%%KEYRESULTS%%
+
+% ---------------------------------------------------------------- 1
+\section{Introduction}
+
+A camera is fixed to the tool of a simulated UR5 arm. The goal is to move the arm until a small
+coloured box appears in the camera image at a chosen place and with a chosen size. The arm is never
+told a position in metres: it is steered only by what the camera sees. This is image-based visual
+servoing (IBVS) \cite{chaumette2006}.
+
+The assignment has four tasks. Task~1 servos to a static target, Task~2 tracks a target moving on a
+circle, and Tasks~3--4 add an obstacle that plain IBVS drives into, which is solved by planning a path
+in image space with RRT and then RRT$^{*}$. I first implemented the nine required parts (TODO~0 to
+TODO~8, Sections~\ref{sec:setup}--\ref{sec:baseline}). I then added four improvements of my own
+(Section~\ref{sec:improvements}), each of which can be switched off in
+\texttt{config/experiment\_config.py} to get back to the baseline.
+
+% ---------------------------------------------------------------- 2
+\section{Problem setup}\label{sec:setup}
+
+\paragraph{Camera and features} The camera image is $640\times480$\,px with focal length
+$f_x=f_y=500$\,px. The simulator segments the target by colour, giving a binary region $\mathcal{D}$,
+and summarises it by three numbers computed from image moments \cite{chaumette2004}:
+\begin{equation}
+  \vect{s}=\begin{bmatrix}x_c & y_c & a\end{bmatrix}^{\!\top},\qquad
+  a=m_{00},\quad x_c=\frac{m_{10}}{m_{00}},\quad y_c=\frac{m_{01}}{m_{00}},\qquad
+  m_{ij}=\sum_{(x,y)\in\mathcal{D}} x^{i}y^{j}.
+\end{equation}
+Here $(x_c,y_c)$ is the centre of the target in pixels, measured from the image centre ($x$ to the
+right, $y$ down), and $a$ is the number of pixels it covers. A nearer camera sees a bigger target:
+for a target of fixed size, $a\propto 1/Z^{2}$, where $Z$ is the camera--target distance.
+
+\paragraph{Desired feature (TODO~0)} I chose
+\begin{equation}
+  \vect{s}^{*}=\begin{bmatrix}40 & 30 & 2500\end{bmatrix}^{\!\top},
+\end{equation}
+which puts the target slightly right of and below the image centre with an area of 2500\,px$^{2}$.
+All three values sit inside the recommended ranges ($0\le x^{*}\le100$, $0\le y^{*}\le80$,
+$2000\le a^{*}\le3000$), so the goal is reachable in every task. The start view in Tasks~1--2 is
+$\vect{s}_0=[156.5,\,-122.8,\,1450]^{\top}$: the target starts up and to the right, and smaller,
+so the camera has to move towards it.
+
+\paragraph{Error and control loop} The error is $\vect{e}=\vect{s}-\vect{s}^{*}$. Every
+$\Delta t=0.1$\,s the controller measures $\vect{s}$, computes a camera twist
+$\vect{v}_c=[v_x,v_y,v_z,\omega_x,\omega_y,\omega_z]^{\top}$ in the camera frame, converts it to joint
+rates with the camera Jacobian, $\dot{\vect q}=J_c\pinv\vect{v}_c$, scales them down if any joint would
+exceed its speed limit (3.15\,rad/s), and moves the arm. Only the step from $\vect{e}$ to $\vect{v}_c$
+is designed in this assignment.
+
+% ---------------------------------------------------------------- 3
+\section{Method}\label{sec:method}
+
+\subsection{Interaction matrix (TODO 1)}
+
+The interaction matrix $L$ tells how fast each feature changes when the camera moves:
+\begin{equation}
+  \dot{\vect{s}}=L(\vect{s},Z)\,\vect{v}_c,\qquad L\in\mathbb{R}^{3\times6}.
+\end{equation}
+For a point at depth $Z$ with normalised coordinates $x=X/Z$, $y=Y/Z$, a static point moves relative
+to the camera as $\dot{\vect P}=-\vect v-\vect\omega\times\vect P$. Differentiating the projection gives
+the classical point rows \cite{chaumette2006}:
+\begin{align}
+  L_x&=\begin{bmatrix}-\tfrac1Z & 0 & \tfrac xZ & xy & -(1+x^{2}) & y\end{bmatrix},\\
+  L_y&=\begin{bmatrix}0 & -\tfrac1Z & \tfrac yZ & 1+y^{2} & -xy & -x\end{bmatrix}.
+\end{align}
+The entries have a direct meaning. The $-1/Z$ in the $v_x$ column says that moving the camera to the
+right makes the target slide left in the image, and faster when it is close. The $x/Z$ in the $v_z$
+column says that approaching the target spreads points away from the image centre. The rotation
+columns do not depend on $Z$: turning the camera shifts near and far points alike.
+
+For the area, $a\propto1/Z^{2}$ gives $\dot a/a=-2\dot Z/Z$; moving forward at $v_z$ means
+$\dot Z=-v_z$, so $\dot a=(2a/Z)\,v_z$. For a planar target parallel to the image plane the full row
+from the moment-based derivation \cite{chaumette2004} is
+\begin{equation}
+  L_a=\begin{bmatrix}0 & 0 & \tfrac{2a}{Z} & 3ay & -3ax & 0\end{bmatrix}.
+\end{equation}
+The features are in pixels, $x_c=f_x x$, so the first row is multiplied by $f_x$ and the second by
+$f_y$; the area is already in px$^{2}$ and its row is used as it is:
+$L=\begin{bmatrix}f_xL_x;\ f_yL_y;\ L_a\end{bmatrix}$.
+\begin{lstlisting}
+x, y = xc / fx, yc / fy                       # pixels -> normalised
+L_x = fx * np.array([-1/Z, 0, x/Z, x*y, -(1 + x**2), y])
+L_y = fy * np.array([0, -1/Z, y/Z, 1 + y**2, -x*y, -x])
+L_a = np.array([0, 0, 2*a/Z, 3*a*y, -3*a*x, 0])
+return np.array([L_x, L_y, L_a])
+\end{lstlisting}
+As a check, $\vect s=[100,-50,1000]$ and $Z=0.5$ give $x=0.2$, $y=-0.1$ and a first row
+$500\cdot[-2,0,0.4,-0.02,-1.04,-0.1]=[-1000,0,200,-10,-520,-50]$, exactly the value the unit test
+expects.
+
+\subsection{Classic IBVS law (TODO 2)}
+
+The design goal is an error that shrinks by the same fraction every second, without overshoot:
+\begin{equation}
+  \dot{\vect e}=-\lambda\vect e\quad\Longrightarrow\quad \vect e(t)=\vect e(0)\,e^{-\lambda t}.
+\end{equation}
+For a static target $\dot{\vect e}=L\vect v_c$. Setting $L\vect v_c=-\lambda\vect e$ requires inverting $L$,
+which is $3\times6$ and has no inverse. The Moore--Penrose pseudo-inverse $L\pinv=L^{\top}(LL^{\top})^{-1}$
+gives the smallest twist that produces the wanted error rate:
+\begin{equation}\label{eq:ibvs}
+  \vect v_c=-\lambda\,L\pinv\vect e,\qquad \lambda=1\ \text{s}^{-1}.
+\end{equation}
+The code uses the provided damped pseudo-inverse, which replaces each $1/\sigma_i$ by
+$\sigma_i/(\sigma_i^{2}+\delta^{2})$ and so stays bounded near singular poses.
+
+\subsection{Moving target (TODOs 3 and 4)}
+
+When the target moves, the error changes for two reasons, the camera's motion and the target's own:
+\begin{equation}
+  \dot{\vect e}=L\vect v_c+\frac{\partial\vect e}{\partial t}.
+\end{equation}
+The classic law only reacts to error that already exists, so it always trails the target. The
+target's part cannot be measured directly, but it is what remains of the measured feature rate once
+the part caused by the camera's last command is removed (TODO~3):
+\begin{equation}\label{eq:motion}
+  \widehat{\frac{\partial\vect e}{\partial t}}=\frac{\vect s_k-\vect s_{k-1}}{\Delta t}-L_{k-1}\vect v_{k-1}.
+\end{equation}
+The provided loop smooths this estimate with a first-order filter of weight $\alpha=0.5$. Asking again
+for $\dot{\vect e}=-\lambda\vect e$ and solving for $\vect v_c$ gives the compensated law (TODO~4):
+\begin{equation}\label{eq:comp}
+  \vect v_c=-L\pinv\!\left(\lambda\vect e+\widehat{\frac{\partial\vect e}{\partial t}}\right).
+\end{equation}
+The extra term is a feed-forward: the camera follows the target's motion as it happens instead of
+waiting for an error to build up.
+
+\subsection{Image-space RRT (TODOs 5 and 6)}
+
+IBVS is greedy: each step reduces the image error as fast as possible and ignores everything else, so
+with an obstacle between the start and goal poses it drives straight into it. The fix is to plan
+first. The planner grows two coupled trees, one of features $\vect s$ and one of configurations
+$\vect q$; each feature node stores the configuration that produces it. Because every node has a real
+$\vect q$, each node and each edge is checked for field of view, occlusion by the obstacle, collision
+(with a 2\,cm safety margin) and joint limits.
+
+Each iteration samples $\vect s_{\text{rand}}$ (the goal every 10th time, otherwise a feature from a
+dataset of 2000 views the robot can produce), finds the nearest node, and extends it by one step
+(TODO~5):
+\begin{align}
+  \dot{\vect s}&=\lambda_{\text{RRT}}\,(\vect s_{\text{rand}}-\vect s_{\text{parent}}),\qquad \lambda_{\text{RRT}}=0.5,\\
+  J_1&=L(\vect s_{\text{parent}},Z)\,J_c(\vect q_{\text{parent}}),\\
+  \dot{\vect q}&=J_1\pinv\dot{\vect s}+P_1(J_2P_1)\pinv\!\left(\vect 0-J_2J_1\pinv\dot{\vect s}\right),\qquad P_1=I-J_1\pinv J_1,\\
+  \vect q_{\text{new}}&=\vect q_{\text{parent}}+\dot{\vect q}\,\Delta t_{\text{RRT}},\qquad \Delta t_{\text{RRT}}=1\ \text{s}.
+\end{align}
+$J_1$ maps joint rates straight to feature rates. The image task uses only three of the six joint
+freedoms; the other three are used by a secondary task, $J_2=J_c[3{:}6,:]$, that keeps the camera
+orientation fixed. Projecting it through $P_1$ means it never disturbs the image task. Planning stops
+at the first node within 75\,px of $\vect s^{*}$. TODO~6 draws the result: grey parent--child edges,
+blue nodes and the start-to-goal path in red, both in the 3-D feature space and in the image plane.
+
+The robot then follows the planned features $\vect s^{*}_k$ with trajectory-tracking IBVS. This is the
+law of Eq.~\eqref{eq:comp} with the plan's own velocity in the role of the target's motion, which is why
+Task~2 comes before Task~3:
+\begin{equation}
+  \vect v_c=-\lambda L\pinv(\vect s_k-\vect s^{*}_k)+L\pinv\,\frac{\vect s^{*}_k-\vect s^{*}_{k-1}}{\Delta t}.
+\end{equation}
+
+\subsection{Image-space RRT$^{*}$ (TODOs 7 and 8)}
+
+RRT attaches each new node to whichever node is nearest to the random sample and stops at the first
+solution, so its paths wander. RRT$^{*}$ \cite{karaman2011} keeps a cost $c(i)$ for every node, the
+length of its path back to the root in feature space, and adds two steps for each new node, using the
+neighbours $\mathcal N$ within 150\,px:
+\begin{itemize}
+  \item \textbf{Choose parent (TODO 7).} Connect the new node to
+        $\arg\min_{i\in\mathcal N}\, c(i)+\lVert\vect s_{\text{new}}-\vect s_i\rVert$, among the
+        neighbours that a valid edge can reach (at most 0.5\,rad of joint motion, collision-free,
+        target visible). The cost comparison is done first, since the edge check is expensive.
+  \item \textbf{Rewire (TODO 8).} For each neighbour $j$, if
+        $c(\text{new})+\lVert\vect s_j-\vect s_{\text{new}}\rVert<c(j)$ and the edge is valid, make the
+        new node the parent of $j$ in \emph{both} trees and lower the cost of $j$ and its whole subtree by
+        the same amount. A loop cannot form: if $j$ were an ancestor of the new node, the new node's cost
+        would already be at least $c(j)$.
+\end{itemize}
+RRT$^{*}$ does not stop at the first solution: it runs all 3000 iterations and returns the cheapest node
+within the goal radius.
+
+%%RESULTS%%
+
+% ---------------------------------------------------------------- references
+\begin{thebibliography}{9}\small
+\bibitem{chaumette2006} F.~Chaumette and S.~Hutchinson, ``Visual servo control, Part I: Basic approaches,''
+  \emph{IEEE Robotics \& Automation Magazine}, vol.~13, no.~4, pp.~82--90, 2006.
+\bibitem{chaumette2004} F.~Chaumette, ``Image moments: a general and useful set of features for visual servoing,''
+  \emph{IEEE Transactions on Robotics}, vol.~20, no.~4, pp.~713--723, 2004.
+\bibitem{lavalle1998} S.~M.~LaValle, ``Rapidly-exploring random trees: a new tool for path planning,''
+  Technical Report 98-11, Iowa State University, 1998.
+\bibitem{karaman2011} S.~Karaman and E.~Frazzoli, ``Sampling-based algorithms for optimal motion planning,''
+  \emph{International Journal of Robotics Research}, vol.~30, no.~7, pp.~846--894, 2011.
+\bibitem{visp2005} E.~Marchand, F.~Spindler and F.~Chaumette, ``ViSP for visual servoing: a generic software
+  platform with a wide class of robot control skills,'' \emph{IEEE Robotics \& Automation Magazine},
+  vol.~12, no.~4, pp.~40--52, 2005.
+\bibitem{barshalom2001} Y.~Bar-Shalom, X.~R.~Li and T.~Kirubarajan, \emph{Estimation with Applications to
+  Tracking and Navigation}. Wiley, 2001.
+\bibitem{geraerts2007} R.~Geraerts and M.~H.~Overmars, ``Creating high-quality paths for motion planning,''
+  \emph{International Journal of Robotics Research}, vol.~26, no.~8, pp.~845--863, 2007.
+\bibitem{corke2017} P.~Corke, \emph{Robotics, Vision and Control}, 2nd ed. Springer, 2017.
+\end{thebibliography}
+
+\end{document}
